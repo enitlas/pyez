@@ -30,7 +30,6 @@ while True:
     conf_file = raw_input('configuration file location: ')
     if not os.path.exists(conf_file):
         print "File path is invalid, please enter a valid file path"
-        continue
     elif not conf_file.endswith('.conf'):
         print "File is not a .conf file, please enter a .conf file"
         continue
