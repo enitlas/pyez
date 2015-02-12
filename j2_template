@@ -1,0 +1,70 @@
+import sys
+from jnpr.junos import Device
+from jnpr.junos.utils.config import Config
+from jnpr.junos.exception import *
+import getpass
+import os
+
+#list of Juniper devices
+dict = {}
+dict['ip1'] = "host1"
+
+# Import the configuration values to be applied to the template
+from config_values import config_values_dict
+
+# Define the device, jinja2 template, and give credentials
+target_host = raw_input('device name: ')
+userid = raw_input('username: ')
+hidepass = getpass.getpass()
+dev = Device(host=target_host, user=userid, password=hidepass)
+dev.bind( cu=Config )
+
+# Open the device, else error message
+try:
+    dev.open()
+except Exception as err:
+    print "Cannot connect to device:", err
+
+# specify dictionary file, name of dictionary, the underlying Juniper library doesn't seem to like if the dictionary file exists outside of the same directory as the script
+from config_values import config_values_dict
+
+# Define configuration file path, validate path and file extension
+while True:
+    template_file = raw_input('template file location: ')
+    if not os.path.exists(template_file):
+        print "File path is invalid, please enter a valid file path"
+    elif not conf_file.endswith('.conf'):
+        print "File is not a .conf file, please enter a .conf file"
+    else:
+        break
+
+# merge config with j2 template
+print "Loading configuration changes"
+dev.cu.load(template_path=template_file, template_vars=config_values_dict, merge=True)
+
+# display candidate configuration for validation
+print "Candidate configuration:"
+dev.cu.pdiff()
+
+# user commit confirmation, else rollback
+commit_config = raw_input('Do you want to commit the configuration? ')
+
+if commit_config in ["yes", "Yes", "y", "Y"]:
+    print "Committing configuration"
+    try:
+        dev.cu.commit()
+    except CommitError:
+        print "Error: Unable to commit configuration"
+        print "Rolling back configuration"
+        dev.cu.rollback(rb_id=1)
+        dev.cu.commit
+else:
+    print "Commit cancelled"
+    print "Rolling back configuration"
+    dev.cu.rollback(rb_id=1)
+    dev.cu.commit()
+
+# close netconf session
+dev.close()
+
+quit()
