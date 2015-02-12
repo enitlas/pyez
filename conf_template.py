@@ -32,7 +32,6 @@ while True:
         print "File path is invalid, please enter a valid file path"
     elif not conf_file.endswith('.conf'):
         print "File is not a .conf file, please enter a .conf file"
-        continue
     else:
         break
 
