@@ -1,0 +1,118 @@
+import sys, getpass, json, time, argparse, requests
+from jnpr.junos import Device
+from jnpr.junos.utils.config import Config
+from jnpr.junos.exception import *
+
+# change all these inputs to being loaded from json or j2
+# set user password
+#USERID = raw_input('Enter your username: ')
+#HIDEPASS = getpass()
+#BIGIP_ADDRESS = LTM
+#BIGIP_USER = USERID
+#BIGIP_PASS = HIDEPASS
+#SLEEP_TIME = 20
+# get info for vs/pool
+#VS_NAME = raw_input('Enter Virtual Server Name: ')
+#VS_ADDRESS = raw_input('Enter Virtual Server IP: ')
+#VS_PORT = raw_input('Enter Virtual Server Port: ')
+#POOL_NAME = raw_input('Enter Pool Name: ')
+#POOL_LB_METHOD = 'least-connections-member'
+#POOL_MEMBERS = [ '10.0.0.1:80', '10.0.0.2:80', '10.0.0.3:80' ]
+
+# create pool
+def create_pool(bigip, name, members, lb_method):
+	payload = {}
+
+	# convert member format
+	members = [ { 'kind' : 'ltm:pool:members', 'name' : member } for member in POOL_MEMBERS ]
+
+	# define test pool
+	payload['kind'] = 'tm:ltm:pool:poolstate'
+	payload['name'] = name
+	payload['description'] = name
+	payload['loadBalancingMode'] = lb_method
+	payload['monitor'] = 'icmp'
+	payload['members'] = members
+
+	bigip.post('%s/ltm/pool' % BIGIP_URL_BASE, data=json.dumps(payload))
+
+def create_http_virtual(bigip, name, address, port, pool):
+	payload = {}
+
+	# define test virtual
+	payload['kind'] = 'tm:ltm:virtual:virtualstate'
+	payload['name'] = name
+	payload['description'] = name
+	payload['destination'] = '%s:%s' % (address, port)
+	payload['mask'] = '255.255.255.255'
+	payload['ipProtocol'] = 'tcp'
+	payload['sourceAddressTranslation'] = { 'type' : 'snat' }
+	payload['profiles'] = [ 
+		{ 'kind' : 'ltm:virtual:profile', 'name' : 'http' }, 
+		{ 'kind' : 'ltm:virtual:profile', 'name' : 'tcp' }
+	]
+	payload['pool'] = pool
+
+	bigip.post('%s/ltm/virtual' % BIGIP_URL_BASE, data=json.dumps(payload))
+
+# Inserts route to VS into that site's aggregation switch
+def insertRoute(host, user, password, vs, nexthop):
+# define params that Juniper PyEZ needs
+	dev = Device(host=host, user=user, password=password)
+# Open the agsw, handle exceptions
+	try:
+		dev.open()
+	except Exception as err:
+		print "Cannot connect to device", err
+	dev.bind ( cu=Config )
+	dev.cu.load("set routing-options static route {0} next-hop {1}".format(vs, nexthop))
+	try:
+		dev.cu.commit()
+	except CommitError as err1:
+		print "device: {0}".format(host), err1
+		print "Rolling back configuration"
+		dev.cu.rollback(rb_id=1)
+		dev.cu.commit
+		dev.close()
+		sys.exit(2)
+	dev.close()
+	sys.exit(3)
+
+
+def main():
+	parser = argparse.ArgumentParser(description="Creates a Virtual Server and corresponding pool on an F5, inserts route for VS")
+	parser.add_argument("-C", dest="COLO", required=True, choices=[den, phx], help="The DC in which the virt will reside, 'den' or 'phx'")
+	args = parser.parse_args
+
+#I'm pretty sure this isn't right but I think it's close, or at least the idea is close.
+	AGSW = 'den2agsw01' if COLO == "den"
+	LTM = 'den2adc01' if COLO == "den"
+	NEXT_HOP = '10.2.255.10' if COLO == "den"
+	AGSW = 'phx1agsw01' if COLO == "phx"
+	LTM = 'phx1adc01' if COLO == "phx"
+	NEXT_HOP = '10.4.255.10' if COLO == "phx"
+
+# REST resource for BIG-IP that all other requests will use
+	bigip = requests.session()
+	bigip.auth = (USERID, HIDEPASS)
+	bigip.verify = False
+	bigip.headers.update({'Content-Type' : 'application/json'})
+	print "created REST resource for BIG-IP at %s..." % LTM
+
+# Requests requires a full URL to be sent as arg for every request, define base URL globally here
+	BIGIP_URL_BASE = 'https://%s/mgmt/tm' % LTM
+
+# create pool
+	create_pool(LTM, POOL_NAME, POOL_MEMBERS, POOL_LB_METHOD)	
+	print "created pool \"%s\" with members %s..." % (POOL_NAME, ", ".join(POOL_MEMBERS))
+
+# create virtual
+	create_http_virtual(LTM, VS_NAME, VS_ADDRESS, VS_PORT, POOL_NAME)
+	print "created virtual server \"%s\" with destination %s:%s..." % (VS_NAME, VS_ADDRESS, VS_PORT)
+
+# sleep for a little while
+	print "sleeping for %s seconds, check for successful creation..." % SLEEP_TIME
+	time.sleep(SLEEP_TIME)
+
+	insertRoute(AGSW, USERID, HIDEPASS, VS_ADDRESS, NEXT_HOP)
+
